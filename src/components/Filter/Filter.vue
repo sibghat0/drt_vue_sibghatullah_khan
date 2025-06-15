@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useToast } from 'vue-toastification'
 
 import {
   ObjectType,
@@ -16,6 +17,11 @@ import { Filter, X, LoaderCircle } from 'lucide-vue-next'
 
 import homeService from '@/service/home.service'
 
+const emit = defineEmits<{
+  filteredSatellitesChanged: [satellites: SatelliteData[]]
+}>()
+
+const toast = useToast()
 const projectStore = useProjectStore()
 const { allSatellites, selectedItems, isFullDataFetched, isLoadingSatellite, isFilterActivated } =
   storeToRefs(projectStore)
@@ -105,6 +111,16 @@ const updateLocalStorage = () => {
 }
 
 /**
+ * Stores filtered data in both ref and Pinia store, and emits to parent
+ *
+ * @param {SatelliteData[]} filteredData - The filtered satellite data
+ */
+const storeFilteredData = (filteredData: SatelliteData[]) => {
+  projectStore.setDisplayedSatellites(filteredData)
+  emit('filteredSatellitesChanged', filteredData)
+}
+
+/**
  * Resets all filter-related state to initial values
  */
 const resetFilterState = () => {
@@ -126,7 +142,7 @@ const fetchSatelliteData = async (payload?: SatelliteQueryParams) => {
     const response = await homeService.getSatellitesData(payload)
     return response
   } catch (error) {
-    console.error('Error fetching satellite data:', error)
+    toast.error('Error fetching satellite data:')
     throw error
   } finally {
     isLoading.value = false
@@ -142,7 +158,7 @@ const fetchFullDataIfNeeded = async () => {
   if (!isFullDataFetched.value) {
     const response = await fetchSatelliteData()
     projectStore.setAllSatellites(response)
-    projectStore.setDisplayedSatellites(response)
+    storeFilteredData(response)
     projectStore.setIsFullDataFetched(true)
     return response
   }
@@ -175,7 +191,7 @@ const fetchFilteredDataIfNeeded = async () => {
  */
 const applyFiltersLocally = () => {
   const filtered = filterSatelliteData(allSatellites.value)
-  projectStore.setDisplayedSatellites(filtered)
+  storeFilteredData(filtered)
   showFilter.value = selectedFilterList.value
   updateLocalStorage()
 }
@@ -192,7 +208,7 @@ const applyFilters = async () => {
     applyFiltersLocally()
     openFilter.value = false
   } catch (error) {
-    console.error('Failed to apply filters:', error)
+     toast.error('Failed to apply filters:')
   }
 }
 
@@ -225,10 +241,11 @@ const clearFilter = async () => {
 
   openFilter.value = false
   try {
-    await fetchFullDataIfNeeded()
+    const fullData = await fetchFullDataIfNeeded()
+    storeFilteredData(fullData)
   } catch (error) {
-    console.error('Error fetching full satellite data:', error)
-    projectStore.setDisplayedSatellites([])
+    toast.error('Error fetching full satellite data:')
+    storeFilteredData([])
     openFilter.value = true
   }
 }
@@ -252,20 +269,23 @@ const initializeFiltersFromStorage = async () => {
     selectedObjectTypes.value = new Set(localStorageFilter.selectedObjectTypes)
     selectedOrbitCodes.value = new Set(localStorageFilter.selectedOrbitCodes)
     previousObjectTypes.value = new Set(localStorageFilter.selectedObjectTypes)
-    projectStore.setIsFilterActivated(showFilter.value.length)
 
     const response = await fetchSatelliteData(payload)
     showFilter.value = selectedFilterList.value
-    projectStore.setDisplayedSatellites(filterSatelliteData(response))
+    projectStore.setIsFilterActivated(showFilter.value.length)
+    const filteredData = filterSatelliteData(response)
+    storeFilteredData(filteredData)
   } catch (error) {
-    console.error('Failed to initialize filters from storage:', error)
+    toast.error('Failed to initialize filters from storage:')
     resetFilterState()
 
     try {
-      await fetchSatelliteData()
+      const fallbackData = await fetchSatelliteData()
       projectStore.setIsFullDataFetched(true)
+      storeFilteredData(fallbackData)
     } catch (fallbackError) {
       projectStore.setIsFullDataFetched(false)
+      storeFilteredData([])
     }
   }
 }

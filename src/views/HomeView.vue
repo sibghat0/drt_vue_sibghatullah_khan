@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useToast } from "vue-toastification"
 
 import { useProjectStore } from '@/stores/project'
 import { Sort, type SatelliteData, type SortDirection } from '@/types/home.types'
 import homeService from '@/service/home.service'
-
-import { CircleAlert } from 'lucide-vue-next'
 
 import SelectedSatellite from '@/components/SelectedSatellite/SelectedSatellite.vue'
 import FilterPanel from '@/components/Filter/Filter.vue'
@@ -15,6 +14,7 @@ import SatelliteTable from '@/components/SatelliteTable/SatelliteTable.vue'
 
 const itemsPerBatch = 40
 
+const toast = useToast()
 const projectStore = useProjectStore()
 const { allSatellites, displayedSatellites, selectedItems, isFilterActivated, isLoadingSatellite } =
   storeToRefs(projectStore)
@@ -27,8 +27,7 @@ const originalSatellites = ref<SatelliteData[]>([])
 const currentIndex = ref<number>(0)
 const sortKey = ref<keyof SatelliteData | null>(null)
 const sortDir = ref<SortDirection | undefined>(Sort.ASC)
-const selectionError = ref<string>('')
-const showSelectionError = ref<boolean>(false)
+const localFilteredSatellites = ref<SatelliteData[]>([])
 
 const statusText = computed(() => {
   if (isLoadingSatellite.value) return 'Loading satellites...'
@@ -70,6 +69,7 @@ const loadAllData = async () => {
   } catch (error) {
     projectStore.setIsFullDataFetched(false)
     dataLoaded.value = false
+    toast.error('Failed to load satellite data. Please try again.')
   } finally {
     initialLoading.value = false
   }
@@ -98,26 +98,16 @@ const loadNextBatch = () => {
 /**
  * Handles search bar clear event
  */
-const handleSearchCleared = () => {
+const handleSearchCleared = async() => {
   projectStore.setAllSatellites([...originalSatellites.value])
-  projectStore.setDisplayedSatellites([])
   currentIndex.value = 0
   if (dataLoaded.value) {
-    loadNextBatch()
+   await loadNextBatch()
   }
-}
-
-/**
- * Displays an error message to the user with auto-hide functionality
- *
- * @param {string} message - The error message to display
- */
-const showError = (message: string) => {
-  selectionError.value = message
-  showSelectionError.value = true
-  setTimeout(() => {
-    showSelectionError.value = false
-  }, 3000)
+  if(isFilterActivated.value > 0)
+  projectStore.setDisplayedSatellites(localFilteredSatellites.value)
+else
+projectStore.setDisplayedSatellites([...originalSatellites.value])
 }
 
 /**
@@ -138,7 +128,10 @@ const handleCheckboxClick = (selectedItem: SatelliteData, event: Event) => {
   } else {
     if (currentSelected.length >= 10) {
       event.preventDefault()
-      showError('Maximum 10 satellites can be selected')
+      toast.error('Maximum 10 satellites can be selected', {
+        timeout: 4000,
+        icon: "⚠️"
+      })
       return
     }
     projectStore.setSelectedItems([...currentSelected, selectedItem])
@@ -158,8 +151,8 @@ const clearAllSelections = () => {
 const handleScroll = () => {
   if (isFilterActivated.value > 0) {
     if (
-      displayedSatellites.value.length === 0 ||
-      currentIndex.value >= displayedSatellites.value.length
+      localFilteredSatellites.value.length === 0 ||
+      currentIndex.value >= localFilteredSatellites.value.length
     ) {
       return
     }
@@ -186,6 +179,10 @@ const tableSort = (key: keyof SatelliteData, direction: SortDirection) => {
   const allSatellites = projectStore.allSatellites
   const sortedData = homeService.handleSort(key, direction, allSatellites)
   projectStore.setDisplayedSatellites(sortedData)
+}
+
+const handleFilteredSatellites = (satellites: SatelliteData[]) => {
+  localFilteredSatellites.value = satellites
 }
 
 watch(
@@ -231,7 +228,7 @@ onMounted(async () => {
           class="px-4 flex justify-end sm:w-fit"
           :class="isFilterActivated > 0 ? 'sm:pr-4 sm:pt-4 w-full pb-2' : 'pt-4'"
         >
-          <FilterPanel />
+          <FilterPanel @filteredSatellitesChanged="handleFilteredSatellites" />
         </div>
       </div>
       <div
@@ -254,13 +251,6 @@ onMounted(async () => {
             Clear All
           </button>
         </div>
-      </div>
-      <div
-        v-if="showSelectionError"
-        class="fixed top-4 right-4 z-50 bg-red-600 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2"
-      >
-        <CircleAlert :size="16" />
-        <span class="text-sm font-medium">{{ selectionError }}</span>
       </div>
 
       <div
